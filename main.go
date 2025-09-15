@@ -1,15 +1,23 @@
+// nolint: revive
 package main
 
 import (
-	"fmt"
-	"time"
+	"context"
 
+	"collections/httpx"
 	"collections/httpx/hooks"
 )
 
 func main() {
-	bkfj := hooks.NewBackoffWithJitter(2*time.Second, 10*time.Minute, hooks.WithoutJitter)
-	for attempt := range 30 {
-		fmt.Println(bkfj.NextWaitDuration(nil, nil, attempt+1))
+	hc := httpx.New(false)
+	res, err := hc.Get("https://example.com").
+		Context(context.Background()).
+		Headers(map[string]string{"Auth": "simple"}).
+		Queries(map[string]string{"id": "abcd"}).
+		RetryHook((&hooks.RetryHook{}).Hook).
+		Exec()
+	if err != nil {
+		panic(err)
 	}
+	defer res.Body.Close()
 }

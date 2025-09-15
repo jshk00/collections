@@ -89,9 +89,7 @@ func (m *Map[K, V]) Clear() {
 func (m *Map[K, V]) Clone() map[K]V {
 	cm := make(map[K]V, m.Len())
 	m.mu.RLock()
-	for k, v := range m.m {
-		cm[k] = v
-	}
+	maps.Copy(cm, m.m)
 	m.mu.RUnlock()
 	return cm
 }

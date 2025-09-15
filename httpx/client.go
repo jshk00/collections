@@ -5,24 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 )
-
-// Change this to desired user agent header
-// or you can always overwrite using Header Options
-const HeaderUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
 type Client struct {
 	client *http.Client
-	tracer *httptrace.ClientTrace
-	trace  bool
 }
 
 func New(trace bool) *Client {
 	return (&Client{
 		client: &http.Client{},
-		trace:  trace,
-		tracer: getTracer(),
 	}).SetTransport(defaultTransport)
 }
 
@@ -53,57 +44,34 @@ func (c *Client) SetCookieJar(jar http.CookieJar) *Client {
 	return c
 }
 
-// SetTracer replace default tracer with your own implementation.
-func (c *Client) SetTracer(tracer *httptrace.ClientTrace) *Client {
-	if tracer != nil {
-		c.tracer = tracer
-	}
-	return c
-}
-
 // Get is http get method
-func (c *Client) Get(ctx context.Context, uri string, ho *HTTPOptions) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodGet, uri, nil, ho)
+func (c *Client) Get(uri string) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodGet).URL(uri)
 }
 
 // Head is http head method follows upto 10 redirect
-func (c *Client) Head(ctx context.Context, uri string, ho *HTTPOptions) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodHead, uri, nil, ho)
+func (c *Client) Head(uri string) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodHead).URL(uri)
 }
 
 // Post is http post method
-func (c *Client) Post(
-	ctx context.Context,
-	uri string,
-	body io.Reader,
-	ho *HTTPOptions,
-) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodPost, uri, body, ho)
+func (c *Client) Post(uri string, body io.Reader) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodPost).URL(uri).Body(body)
 }
 
 // Put is http put method
-func (c *Client) Put(
-	ctx context.Context,
-	uri string,
-	body io.Reader,
-	ho *HTTPOptions,
-) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodPut, uri, body, ho)
+func (c *Client) Put(uri string, body io.Reader) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodPut).URL(uri).Body(body)
 }
 
 // Patch is http patch method
-func (c *Client) Patch(
-	ctx context.Context,
-	uri string,
-	body io.Reader,
-	ho *HTTPOptions,
-) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodPatch, uri, body, ho)
+func (c *Client) Patch(uri string, body io.Reader) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodPatch).URL(uri).Body(body)
 }
 
 // Delete is http delete method
-func (c *Client) Delete(ctx context.Context, uri string, ho *HTTPOptions) (*http.Response, error) {
-	return c.Exec(ctx, http.MethodDelete, uri, nil, ho)
+func (c *Client) Delete(uri string) *HTTPOptions {
+	return NewHTTPOptions().Method(http.MethodDelete).URL(uri)
 }
 
 // Exec performs the HTTP request with the given method, uri, and options.
@@ -129,40 +97,31 @@ func (c *Client) Delete(ctx context.Context, uri string, ho *HTTPOptions) (*http
 //
 // This ensures hooks remain predictable and prevents accidental multiple
 // reads of the response body.
-func (c *Client) Exec(
-	ctx context.Context,
-	method, uri string,
-	body io.Reader,
-	ho *HTTPOptions,
-) (*http.Response, error) {
-	// if trace is available
-	if c.trace {
-		ctx = httptrace.WithClientTrace(ctx, c.tracer)
-	}
-
+func (c *Client) Exec(ho *HTTPOptions) (*http.Response, error) {
 	if ho == nil {
 		ho = &HTTPOptions{}
 	}
 
+	if ho.ctx == nil {
+		ho.ctx = context.Background()
+	}
+
+	// if trace is available
+	// if c.trace {
+	// 	ho.ctx = httptrace.WithClientTrace(ho.ctx, c.tracer)
+	// }
+
 	// initiate request with context
-	req, err := http.NewRequestWithContext(ctx, method, uri, body)
+	req, err := http.NewRequestWithContext(ho.ctx, ho.method, ho.url, ho.body)
 	if err != nil {
 		return nil, err
 	}
-	// initiate request header for general uses
-	req.Header.Set("User-Agent", HeaderUserAgent)
 
 	// set all optional headers
-	for k, v := range ho.headers {
-		req.Header.Set(k, v)
-	}
-
+	req.Header = ho.headers
 	// set all optional queries
-	q := req.URL.Query()
-	for k, v := range ho.queries {
-		q.Set(k, v)
-	}
-	req.URL.RawQuery = q.Encode()
+	req.URL.RawQuery = ho.queries.Encode()
+
 	if ho.requestHook != nil {
 		if err := ho.requestHook(req); err != nil {
 			return nil, fmt.Errorf("failed to execute request hook: %w", err)

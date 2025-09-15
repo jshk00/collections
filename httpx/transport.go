@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	mb                    = 1024 * 1024
+	bufferSize            = 32 * 1024
 	maxIdleConnsPerHost   = 2
 	idleConnTimeout       = 2 * time.Minute
 	expectContinueTimeout = 1 * time.Second
@@ -29,8 +29,8 @@ var defaultTransport = &http.Transport{
 	ExpectContinueTimeout: expectContinueTimeout,
 	TLSHandshakeTimeout:   tlsHandshakeTimeout,
 	ForceAttemptHTTP2:     true,
-	WriteBufferSize:       mb,
-	ReadBufferSize:        mb,
+	WriteBufferSize:       bufferSize,
+	ReadBufferSize:        bufferSize,
 }
 
 // SetProxy set proxy to defaultTransport.

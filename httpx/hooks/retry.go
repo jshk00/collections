@@ -25,7 +25,7 @@ func (e RetryPollError) Error() string {
 		resErr = e.ResponseError.Error()
 	}
 	return fmt.Sprintf(
-		"retry failed after attempts=%d, total_time=%s, req_method=%s, req_url=%s, res_err=%s",
+		"RetryHook: retry failed after attempts=%d, total_time=%s, req_method=%s, req_url=%s, res_err=%s",
 		e.Attempts,
 		e.TotalSleepTime,
 		e.ReqMethod,
@@ -39,9 +39,9 @@ type RetryHook struct {
 	Wait time.Duration
 	// maxmium polling attempts to be performed before failing
 	PollLimit int
-	// condition for retry if false then retry will be performed if true then retry is successful
-	// and will return without error
-	Cond func(*http.Response, error) bool
+	// PostRecv host response checks such as status code and other post response logic goes here.
+	// if error is not nil the request is retired if not the request is consider success.
+	PostRecv func(*http.Response) error
 	// This is recommended if you're passing custom io.Reader, io.ReadClose, *os.File; Because the
 	// http request will only assign the GetBody for *bytes.Buffer, *bytes.Reader, *strings.Reader
 	// in retry re-use of request is intended so we need to provide GetBody which will able to
@@ -58,12 +58,12 @@ func (hk *RetryHook) setDefaults() {
 	if hk.Wait <= 0 {
 		hk.Wait = 20 * time.Second
 	}
-	if hk.Cond == nil {
-		hk.Cond = func(r *http.Response, err error) bool {
-			if err != nil {
-				return false
+	if hk.PostRecv == nil {
+		hk.PostRecv = func(r *http.Response) error {
+			if r.StatusCode > 199 && r.StatusCode < 300 {
+				return fmt.Errorf("PostRecv: response status code is %d", r.StatusCode)
 			}
-			return r.StatusCode > 199 && r.StatusCode < 300
+			return nil
 		}
 	}
 }
@@ -75,7 +75,7 @@ func (hk *RetryHook) Hook(
 	err error,
 ) (*http.Response, error) {
 	hk.setDefaults()
-	if hk.Cond(res, err) {
+	if err := hk.PostRecv(res); err == nil {
 		return res, err
 	}
 	if hk.GetBody != nil {
@@ -85,8 +85,10 @@ func (hk *RetryHook) Hook(
 	var totalWait time.Duration
 	for attempt := 1; attempt <= hk.PollLimit; attempt++ {
 		res, err = hc.Do(req)
-		if hk.Cond(res, err) {
-			return res, nil
+		if err == nil {
+			if err = hk.PostRecv(res); err == nil {
+				return res, nil
+			}
 		}
 
 		// drain resposne body before wait so tcp keep alive be reuse the connection
@@ -115,7 +117,7 @@ func (hk *RetryHook) Hook(
 
 const (
 	defaultWaitTime    = 100 * time.Millisecond
-	defaultMaxWaitTime = 20000 * time.Millisecond
+	defaultMaxWaitTime = 30000 * time.Millisecond
 )
 
 // JitterStrategy is base type for jitter stratget. Choose suitable jitter strategy
