@@ -4,8 +4,8 @@ package main
 import (
 	"context"
 
-	"collections/httpx"
-	"collections/httpx/hooks"
+	"github.com/jshk00/collections/httpx"
+	"github.com/jshk00/collections/httpx/hooks"
 )
 
 func main() {
