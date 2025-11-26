@@ -1,0 +1,10 @@
+when:
+  - event: push
+    branch: master
+
+steps:
+  - name: build
+    image: debian
+    commands:
+      - echo "building..."
+      - echo "bulding done"
