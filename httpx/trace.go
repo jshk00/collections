@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net/http/httptrace"
 	"time"
 )
@@ -35,15 +34,12 @@ type TraceInfo struct {
 	// ConnIdleTime is the duration how long the connection that was previously
 	// idle, if IsConnWasIdle is true.
 	ConnIdleTime time.Duration `json:"connection_idle_time"`
-	// RequestAttempt is to represent the request attempt made during
-	// request execution flow, including retry count.
-	RequestAttempt int `json:"request_attempt"`
 	// RemoteAddr returns the remote network address.
 	RemoteAddr string `json:"remote_address"`
 }
 
 // String method returns string representation of request trace information.
-func (ti TraceInfo) String() string {
+func (ti *TraceInfo) String() string {
 	return fmt.Sprintf(`TRACE INFO:
   DNSLookupTime : %v
   ConnTime      : %v
@@ -55,59 +51,44 @@ func (ti TraceInfo) String() string {
   IsConnReused  : %v
   IsConnWasIdle : %v
   ConnIdleTime  : %v
-  RequestAttempt: %v
   RemoteAddr    : %v`, ti.DNSLookup, ti.ConnTime, ti.TCPConnTime,
 		ti.TLSHandshake, ti.ServerTime, ti.ResponseTime, ti.TotalTime,
-		ti.IsConnReused, ti.IsConnWasIdle, ti.ConnIdleTime, ti.RequestAttempt,
-		ti.RemoteAddr)
+		ti.IsConnReused, ti.IsConnWasIdle, ti.ConnIdleTime, ti.RemoteAddr)
 }
 
-func getTraceLogPrinting(ctx context.Context) context.Context {
+func (ti *TraceInfo) Tracer(ctx context.Context) context.Context {
+	var dnsStart, connectSart, getConn, gotConn, tlsHandshakeStart time.Time
 	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		GetConn: func(addr string) {
-			log.Printf("connection to host and port = %s\n", addr)
+		DNSStart: func(_ httptrace.DNSStartInfo) {
+			dnsStart = time.Now()
 		},
-		GotConn: func(info httptrace.GotConnInfo) {
-			log.Printf("connection acquired: %+v\n", info)
+		DNSDone: func(_ httptrace.DNSDoneInfo) {
+			ti.DNSLookup = time.Since(dnsStart)
 		},
-		PutIdleConn: func(err error) {
-			if err != nil {
-				log.Printf("put idle conn: %+v\n", err)
-			}
+		ConnectStart: func(_, _ string) {
+			connectSart = time.Now()
+		},
+		ConnectDone: func(_, _ string, _ error) {
+			ti.TCPConnTime = time.Since(connectSart)
+		},
+		GetConn: func(_ string) {
+			getConn = time.Now()
+		},
+		GotConn: func(gci httptrace.GotConnInfo) {
+			gotConn := time.Now()
+			ti.ConnTime = gotConn.Sub(getConn)
+			ti.RemoteAddr = gci.Conn.RemoteAddr().String()
+			ti.ConnIdleTime = gci.IdleTime
+			ti.IsConnReused = gci.Reused
 		},
 		GotFirstResponseByte: func() {
-			log.Println("got first response byte")
-		},
-		DNSStart: func(info httptrace.DNSStartInfo) {
-			log.Printf("dns started for host: %s\n", info.Host)
-		},
-		DNSDone: func(info httptrace.DNSDoneInfo) {
-			log.Printf("dns resvolver done: %+v\n", info)
-		},
-		ConnectStart: func(network, addr string) {
-			log.Printf("connection started at network: %s and addr: %s\n", network, addr)
-		},
-		ConnectDone: func(network, addr string, err error) {
-			log.Printf("connection done at network: %s and addr: %s\n", network, addr)
+			ti.ServerTime = time.Since(gotConn)
 		},
 		TLSHandshakeStart: func() {
-			log.Println("tls handshake started")
+			tlsHandshakeStart = time.Now()
 		},
-		TLSHandshakeDone: func(state tls.ConnectionState, err error) {
-			if err != nil {
-				log.Printf("tls handshake done: %+v\n", state)
-			} else {
-				log.Println("tls handshake done with err:", err)
-			}
-		},
-		WroteHeaderField: func(key string, value []string) {
-			log.Printf("header field written key: %s, value: %v\n", key, value)
-		},
-		WroteHeaders: func() {
-			log.Println("writing of headers completed")
-		},
-		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			log.Printf("writing of request completed: %+v\n", info)
+		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
+			ti.TLSHandshake = time.Since(tlsHandshakeStart)
 		},
 	})
 }

@@ -10,7 +10,8 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net/http"
+
+	"github.com/jshk00/collections/httpx"
 )
 
 // ResponseHook provides a response body hook with optional automatic
@@ -55,7 +56,7 @@ type ResponseHook[T any] struct {
 // already have been consumed.
 //
 // Caller is responsible for closing [ResponseHook.RawBody].
-func (r *ResponseHook[T]) Hook(_ *http.Request, res *http.Response) error {
+func (r *ResponseHook[T]) Hook(res *httpx.Response) error {
 	if r.Decompress {
 		switch v := res.Header.Get("Content-Encoding"); v {
 		case "gzip", "x-gzip":

@@ -1,17 +1,18 @@
 package httpx
 
 import (
-	"context"
-	"fmt"
 	"io"
 	"net/http"
 )
 
 type Client struct {
 	client *http.Client
+	trace  bool
+	// Decompress function for response such as br, zstd
+	decompFn func(io.Reader) (io.ReadCloser, error)
 }
 
-func New(trace bool) *Client {
+func New() *Client {
 	return (&Client{
 		client: &http.Client{},
 	}).SetTransport(defaultTransport)
@@ -27,11 +28,21 @@ func (c *Client) SetTransport(t http.RoundTripper) *Client {
 	return c
 }
 
+func (c *Client) EnableTrace() *Client {
+	c.trace = true
+	return c
+}
+
+func (c *Client) SetRespDecompressor(fn func(io.Reader) (io.ReadCloser, error)) *Client {
+	c.decompFn = fn
+	return c
+}
+
 // DisableRedirect disable the redirects in http.Client.
 // By default redirect are not disabled and
 // follows upto configured redirects in http client.
 func (c *Client) DisableRedirect() *Client {
-	c.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+	c.client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
 	return c
@@ -45,99 +56,36 @@ func (c *Client) SetCookieJar(jar http.CookieJar) *Client {
 }
 
 // Get is http get method
-func (c *Client) Get(uri string) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodGet).URL(uri)
+func (c *Client) Get(uri string) *Request {
+	return NewRequest(http.MethodGet, uri, nil)
 }
 
 // Head is http head method follows upto 10 redirect
-func (c *Client) Head(uri string) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodHead).URL(uri)
+func (c *Client) Head(uri string) *Request {
+	return NewRequest(http.MethodHead, uri, nil)
 }
 
 // Post is http post method
-func (c *Client) Post(uri string, body io.Reader) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodPost).URL(uri).Body(body)
+func (c *Client) Post(uri string, body io.Reader) *Request {
+	return NewRequest(http.MethodPost, uri, body)
 }
 
 // Put is http put method
-func (c *Client) Put(uri string, body io.Reader) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodPut).URL(uri).Body(body)
+func (c *Client) Put(uri string, body io.Reader) *Request {
+	return NewRequest(http.MethodPut, uri, body)
 }
 
 // Patch is http patch method
-func (c *Client) Patch(uri string, body io.Reader) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodPatch).URL(uri).Body(body)
+func (c *Client) Patch(uri string, body io.Reader) *Request {
+	return NewRequest(http.MethodPatch, uri, body)
 }
 
 // Delete is http delete method
-func (c *Client) Delete(uri string) *HTTPOptions {
-	return NewHTTPOptions().Method(http.MethodDelete).URL(uri)
+func (c *Client) Delete(uri string) *Request {
+	return NewRequest(http.MethodDelete, uri, nil)
 }
 
-// Exec performs the HTTP request with the given method, uri, and options.
-//
-// Hook execution order:
-//
-//  1. requestHook — runs before sending the request.
-//  2. retryHook   — if defined, takes full control over retries and
-//     determines the final response. In this case, responseHook is
-//     NOT invoked.
-//  3. responseHook — runs only if no retryHook is defined.
-//
-// Important:
-//
-//   - If retryHook is defined (custom or default), responseHook will be ignored.
-//     This avoids conflicts from reading res.Body multiple times.
-//
-//   - When using the default retryHook, place any post-processing logic
-//     (e.g. decoding JSON, logging, validation) in the Cond function itself.
-//
-//   - When writing a custom retryHook, encapsulate your retry decision and
-//     any post-processing logic inside the retryHook implementation.
-//
-// This ensures hooks remain predictable and prevents accidental multiple
-// reads of the response body.
-func (c *Client) Exec(ho *HTTPOptions) (*http.Response, error) {
-	if ho == nil {
-		ho = &HTTPOptions{}
-	}
-
-	if ho.ctx == nil {
-		ho.ctx = context.Background()
-	}
-
-	// if trace is available
-	// if c.trace {
-	// 	ho.ctx = httptrace.WithClientTrace(ho.ctx, c.tracer)
-	// }
-
-	// initiate request with context
-	req, err := http.NewRequestWithContext(ho.ctx, ho.method, ho.url, ho.body)
-	if err != nil {
-		return nil, err
-	}
-
-	// set all optional headers
-	req.Header = ho.headers
-	// set all optional queries
-	req.URL.RawQuery = ho.queries.Encode()
-
-	if ho.requestHook != nil {
-		if err := ho.requestHook(req); err != nil {
-			return nil, fmt.Errorf("failed to execute request hook: %w", err)
-		}
-	}
-
-	res, err := c.client.Do(req)
-	if ho.retryHook != nil {
-		return ho.retryHook(req, res, c.client, err)
-	}
-
-	if ho.responseHook != nil {
-		if err := ho.responseHook(req, res); err != nil {
-			return nil, fmt.Errorf("failed to execute response hook: %w", err)
-		}
-	}
-
-	return res, nil
+func (c *Client) Exec(r *Request) (*Response, error) {
+	res, err := c.client.Do(r.Request) // nolint:bodyClose
+	return &Response{Response: res, TraceInfo: r.tracer, Decompress: c.decompFn}, err
 }
