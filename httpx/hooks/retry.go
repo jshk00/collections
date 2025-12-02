@@ -110,6 +110,7 @@ func (rk *Retry) Hook(
 		Attempts:       rk.PollLimit,
 		TotalSleepTime: totalWait,
 		ReqURL:         req.URL.String(),
+		ReqMethod:      req.Method,
 		ResponseError:  err,
 	}
 }
