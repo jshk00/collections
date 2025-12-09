@@ -73,11 +73,10 @@ func (rk *Retry) setDefaults() {
 
 func (rk *Retry) Hook(
 	req *httpx.Request,
-	hc *httpx.Client,
 ) (*httpx.Response, error) {
 	rk.setDefaults()
 
-	if rk.GetBody != nil {
+	if req.GetBody == nil {
 		req.GetBody = rk.GetBody
 	}
 
@@ -86,11 +85,19 @@ func (rk *Retry) Hook(
 		err       error
 	)
 	for attempt := 1; attempt <= rk.PollLimit; attempt++ {
-		res, err := hc.Exec(req)
+		if _, ok := <-req.Context().Done(); ok {
+			return nil, req.Context().Err()
+		}
+
+		res, err := req.Exec()
 		if err == nil {
 			if err = rk.PostRecv(res); err == nil {
 				return res, nil
 			}
+		}
+
+		if req.GetBody == nil {
+			return res, err
 		}
 
 		// drain some of the resposne body before wait so tcp keep alive be reuse the connection

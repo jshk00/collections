@@ -1,13 +1,8 @@
 package hooks
 
 import (
-	"compress/flate"
-	"compress/gzip"
-	"compress/zlib"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
-	"fmt"
 	"io"
 	"mime"
 
@@ -40,16 +35,9 @@ type ResponseHook[T any] struct {
 	// This guarantees callers can safely close both RawBody and [net/http.Response.Body] without
 	// error.
 	Decompressor func(io.Reader) (io.ReadCloser, error)
-	// RawBody is the (optionally decompressed) response body stream.
-	// If [AutoParse] is true, RawBody will already have been consumed.
-	RawBody io.ReadCloser
 }
 
 // Hook implements a response hook to process [net/http.Response] bodies.
-//
-// If [ResponseHook.Decompress] is true, the response body is wrapped with
-// a decompressor according to the "Content-Encoding" header. If set to false,
-// [ResponseHook.RawBody] is left as the raw [net/http.Response.Body].
 //
 // If [ResponseHook.AutoParse] is true, and the Content-Type is JSON or XML,
 // the body is decoded into [ResponseHook.Body]. In this case, [RawBody] will
@@ -57,42 +45,8 @@ type ResponseHook[T any] struct {
 //
 // Caller is responsible for closing [ResponseHook.RawBody].
 func (r *ResponseHook[T]) Hook(res *httpx.Response) error {
-	if r.Decompress {
-		switch v := res.Header.Get("Content-Encoding"); v {
-		case "gzip", "x-gzip":
-			cr, err := gzip.NewReader(res.Body)
-			if err != nil {
-				return err
-			}
-			r.RawBody = cr
-		case "deflate":
-			cr, err := zlib.NewReader(res.Body)
-			if err != nil {
-				if !errors.Is(err, zlib.ErrHeader) {
-					return err
-				}
-				// if RFC1951 format
-				cr = flate.NewReader(res.Body)
-			}
-			r.RawBody = cr
-		case "br", "zstd":
-			if r.Decompressor == nil {
-				return fmt.Errorf("no decompressor provided for %q", v)
-			}
-			cr, err := r.Decompressor(res.Body)
-			if err != nil {
-				return err
-			}
-			r.RawBody = cr
-		case "":
-			r.RawBody = res.Body
-		default:
-			return fmt.Errorf("incompatible content encoding: %s", v)
-		}
-	}
-
-	if res.Uncompressed && !r.Decompress {
-		r.RawBody = res.Body
+	if res == nil {
+		return nil
 	}
 
 	if r.AutoParse {
@@ -102,11 +56,11 @@ func (r *ResponseHook[T]) Hook(res *httpx.Response) error {
 		}
 		switch mimeType {
 		case "application/json":
-			if err := json.NewDecoder(r.RawBody).Decode(&r.Body); err != nil {
+			if err := json.NewDecoder(res.Body).Decode(&r.Body); err != nil {
 				return err
 			}
 		case "text/xml", "application/xml":
-			if err := xml.NewDecoder(r.RawBody).Decode(&r.Body); err != nil {
+			if err := xml.NewDecoder(res.Body).Decode(&r.Body); err != nil {
 				return err
 			}
 		}

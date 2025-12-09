@@ -10,7 +10,7 @@ type Decoder interface {
 	Decode(data []byte, v any) error
 }
 
-// JSONDecoder implements Decoder using json.Unmarshal.
+// JSONDecoder implements Decoder using [json.Unmarshal].
 type JSONDecoder struct{}
 
 // Decode unmarshals JSON data into v.
@@ -18,7 +18,7 @@ func (JSONDecoder) Decode(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// XMLDecoder implements Decoder using xml.Unmarshal.
+// XMLDecoder implements Decoder using [xml.Unmarshal].
 type XMLDecoder struct{}
 
 // Decode unmarshals XML data into v.

@@ -31,10 +31,11 @@ const (
 // CircuitBreaker is implements circuit breaking pattern for improving system resiliency
 // CircuitBreaker is only used as client
 type CircuitBreaker struct {
-	config       BreakerConfig
-	failureCount atomic.Uint32
-	successCount atomic.Uint32
-	state        atomic.Value
+	config        BreakerConfig
+	failureCount  atomic.Uint32
+	successCount  atomic.Uint32
+	state         atomic.Value
+	lastFailureAt atomic.Value
 }
 
 const (
@@ -61,15 +62,47 @@ func NewCircuitBreaker(config BreakerConfig) *CircuitBreaker {
 	return cb
 }
 
-func (cb *CircuitBreaker) Execute(r *http.Response) {
-	if cb.config.TripFunc(r) {
+func (cb *CircuitBreaker) Execute(r *http.Response, err error) {
+	if cb.config.TripFunc(r) || err != nil {
+		cb.OnFailure()
+		return
+	}
+	cb.OnSuccess()
+}
+
+func (cb *CircuitBreaker) OnSuccess() {
+	switch cb.state.Load() {
+	case StateClosed:
+		cb.successCount.Add(1)
+		if cb.successCount.Load() >= cb.config.SuccessThreshold {
+			cb.state.Store(StateClosed)
+		}
+	case StateHalfOpen:
+		cb.failureCount.Store(0)
 	}
 }
 
-func (cb *CircuitBreaker) changeState(s State) {
-	cb.failureCount.Store(0)
-	cb.successCount.Store(0)
-	cb.state.Store(s)
+func (cb *CircuitBreaker) OnFailure() {
+	switch cb.state.Load() {
+	case StateClosed:
+		if cb.failureCount.Add(1) >= cb.config.FailureThreshold {
+			cb.state.Store(StateOpen)
+		}
+	case StateHalfOpen:
+		cb.lastFailureAt.Store(time.Now().UnixNano())
+		cb.state.Store(StateOpen)
+	}
+}
+
+func (cb *CircuitBreaker) PreRequest() error {
+	if cb.state.Load() == StateOpen {
+		if time.Since(cb.lastFailureAt.Load().(time.Time)) >= cb.config.Timeout {
+			cb.state.Store(StateHalfOpen)
+			return nil
+		}
+		return ErrCircuitBreakerOpen
+	}
+	return nil
 }
 
 func defaultTripFunc(r *http.Response) bool {
