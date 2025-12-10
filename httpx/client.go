@@ -115,7 +115,7 @@ func (c *Client) Delete(uri string) *Request {
 }
 
 func (c *Client) exec(r *Request) (*Response, error) {
-	res, err := c.client.Do(r.Request) // nolint:bodyClose
+	res, err := c.client.Do(r.req) // nolint:bodyClose
 	return &Response{
 		Response:      res,
 		traceInfo:     r.tracer,

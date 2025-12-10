@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/url"
 )
@@ -16,7 +15,7 @@ type (
 )
 
 type Request struct {
-	*http.Request
+	req             *http.Request
 	responseHook    ResponseHook
 	requestHook     RequestHook
 	retryHook       RetryHook
@@ -29,21 +28,51 @@ type Request struct {
 
 func NewRequest(method, uri string, body io.Reader) *Request {
 	req, err := http.NewRequest(method, uri, body)
-	return &Request{Request: req, queries: make(url.Values), err: err}
+	return &Request{req: req, queries: make(url.Values), err: err}
 }
 
-func (r *Request) SetContext(ctx context.Context) *Request {
+func (r *Request) WithContext(ctx context.Context) *Request {
 	if r.err == nil {
-		r.Request = r.WithContext(ctx)
+		r.req = r.req.WithContext(ctx)
 	}
 	return r
+}
+
+func (r *Request) Context() context.Context {
+	return r.req.Context()
+}
+
+func (r *Request) Method() string {
+	return r.req.Method
+}
+
+func (r *Request) GetBodyFn() func() (io.ReadCloser, error) {
+	return r.req.GetBody
+}
+
+func (r *Request) SetBodyFn(fn func() (io.ReadCloser, error)) *Request {
+	r.req.GetBody = fn
+	return r
+}
+
+func (r *Request) URL() *url.URL {
+	return r.req.URL
 }
 
 func (r *Request) SetHeader(k, v string) *Request {
 	if r.err == nil {
-		r.Header.Set(k, v)
+		r.req.Header.Set(k, v)
 	}
 	return r
+}
+
+func (r *Request) SetCookies(c *http.Cookie) *Request {
+	r.req.AddCookie(c)
+	return r
+}
+
+func (r *Request) Raw() *http.Request {
+	return r.req
 }
 
 func (r *Request) SetHeaders(hdrs map[string]string) *Request {
@@ -82,19 +111,6 @@ func (r *Request) SetRetryHook(hook RetryHook) *Request {
 	return r
 }
 
-func (r *Request) Clone(body io.Reader) *Request {
-	r.URL.RawQuery = ""
-	req, err := http.NewRequest(r.Method, r.URL.String(), body)
-	rr := &Request{
-		Request:   req,
-		err:       err,
-		retryHook: r.retryHook,
-	}
-	maps.Copy(rr.queries, r.queries)
-	maps.Copy(rr.Header, r.Header)
-	return rr
-}
-
 // Hook execution order:
 //
 //  1. requestHook — runs before sending the request.
@@ -122,17 +138,17 @@ func (r *Request) Exec() (*Response, error) {
 		return nil, r.err
 	}
 
-	if host := r.Header.Get("Host"); host != "" {
-		r.Host = host
+	if host := r.req.Header.Get("Host"); host != "" {
+		r.req.Host = host
 	}
 
 	// initiate trace once per request if available
 	if r.client.trace {
 		r.tracer = &TraceInfo{}
-		r.Request = r.WithContext(r.tracer.Tracer(r.Context()))
+		r.req = r.req.WithContext(r.tracer.Tracer(r.req.Context()))
 	}
 
-	r.URL.RawQuery = r.queries.Encode()
+	r.req.URL.RawQuery = r.queries.Encode()
 	if r.requestHook != nil {
 		if err := r.requestHook(r); err != nil {
 			return nil, fmt.Errorf("failed to execute request hook: %w", err)

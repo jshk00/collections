@@ -76,8 +76,8 @@ func (rk *Retry) Hook(
 ) (*httpx.Response, error) {
 	rk.setDefaults()
 
-	if req.GetBody == nil {
-		req.GetBody = rk.GetBody
+	if req.GetBodyFn() == nil {
+		req.SetBodyFn(rk.GetBody)
 	}
 
 	var (
@@ -96,7 +96,7 @@ func (rk *Retry) Hook(
 			}
 		}
 
-		if req.GetBody == nil {
+		if req.GetBodyFn() == nil {
 			return res, err
 		}
 
@@ -116,8 +116,8 @@ func (rk *Retry) Hook(
 	return nil, RetryPollError{
 		Attempts:       rk.PollLimit,
 		TotalSleepTime: totalWait,
-		ReqURL:         req.URL.String(),
-		ReqMethod:      req.Method,
+		ReqURL:         req.URL().String(),
+		ReqMethod:      req.Method(),
 		ResponseError:  err,
 	}
 }

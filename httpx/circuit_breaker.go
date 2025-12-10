@@ -16,14 +16,14 @@ type BreakerConfig struct {
 
 var ErrCircuitBreakerOpen = errors.New("httpx: circuit breaker open")
 
-type State int
+type CircuitBreakerState int
 
-func (s State) String() string {
+func (s CircuitBreakerState) String() string {
 	return [...]string{"closed", "open", "half-open"}[s]
 }
 
 const (
-	StateClosed State = iota
+	StateClosed CircuitBreakerState = iota
 	StateOpen
 	StateHalfOpen
 )
