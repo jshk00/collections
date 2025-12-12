@@ -2,90 +2,102 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-)
-
-type (
-	ResponseHook func(*Response) error
-	RequestHook  func(*Request) error
-	RetryHook    func(*Request) (*Response, error)
+	"time"
 )
 
 type Request struct {
-	req             *http.Request
-	responseHook    ResponseHook
-	requestHook     RequestHook
-	retryHook       RetryHook
-	retryHookCalled bool
-	client          *Client
-	queries         url.Values
-	err             error
-	tracer          *TraceInfo
+	RawRequest   *http.Request
+	responseHook ResponseHook
+	requestHook  []RequestHook
+	client       *Client
+	err          error
+	tracer       *TraceInfo
+	ctx          context.Context
+	cookie       *http.Cookie
+	IsTrace      bool
+	URI          string
+	Queries      url.Values
+	Header       http.Header
+	Body         any
+	Method       string
+	retry        *Retry
+	IsRetry      bool
 }
 
-func NewRequest(method, uri string, body io.Reader) *Request {
-	req, err := http.NewRequest(method, uri, body)
-	return &Request{req: req, queries: make(url.Values), err: err}
+func NewRequest() *Request {
+	return &Request{
+		Header:      make(http.Header),
+		Queries:     make(url.Values),
+		requestHook: []RequestHook{DefaultRequestHook},
+	}
 }
 
 func (r *Request) WithContext(ctx context.Context) *Request {
-	if r.err == nil {
-		r.req = r.req.WithContext(ctx)
-	}
+	r.ctx = ctx
 	return r
 }
 
 func (r *Request) Context() context.Context {
-	return r.req.Context()
+	return r.ctx
 }
 
-func (r *Request) Method() string {
-	return r.req.Method
-}
-
-func (r *Request) GetBodyFn() func() (io.ReadCloser, error) {
-	return r.req.GetBody
-}
-
-func (r *Request) SetBodyFn(fn func() (io.ReadCloser, error)) *Request {
-	r.req.GetBody = fn
+func (r *Request) SetMethod(v string) *Request {
+	r.Method = v
 	return r
 }
 
-func (r *Request) URL() *url.URL {
-	return r.req.URL
+func (r *Request) EnableTrace() *Request {
+	r.IsTrace = true
+	return r
+}
+
+func (r *Request) SetRetry(retry *Retry) *Request {
+	if retry == nil {
+		retry = NewRetry()
+	}
+	r.retry = retry
+	r.IsRetry = true
+	return r
+}
+
+func (r *Request) SetBody(v any) *Request {
+	r.Body = v
+	return r
+}
+
+func (r *Request) SetURL(uri string) *Request {
+	r.URI = uri
+	return r
+}
+
+func (r *Request) URL() string {
+	return r.URI
 }
 
 func (r *Request) SetHeader(k, v string) *Request {
-	if r.err == nil {
-		r.req.Header.Set(k, v)
-	}
+	r.Header.Set(k, v)
 	return r
 }
 
 func (r *Request) SetCookies(c *http.Cookie) *Request {
-	r.req.AddCookie(c)
+	r.cookie = c
 	return r
 }
 
-func (r *Request) Raw() *http.Request {
-	return r.req
-}
-
 func (r *Request) SetHeaders(hdrs map[string]string) *Request {
-	if r.err == nil {
-		for k, v := range hdrs {
-			r.SetHeader(k, v)
-		}
+	for k, v := range hdrs {
+		r.SetHeader(k, v)
 	}
 	return r
 }
 
 func (r *Request) SetQuery(k, v string) *Request {
-	r.queries.Set(k, v)
+	r.Queries.Set(k, v)
 	return r
 }
 
@@ -97,7 +109,7 @@ func (r *Request) SetQueries(queries map[string]string) *Request {
 }
 
 func (r *Request) SetRequestHook(hook RequestHook) *Request {
-	r.requestHook = hook
+	r.requestHook = append(r.requestHook, hook)
 	return r
 }
 
@@ -106,64 +118,69 @@ func (r *Request) SetResponseHook(hook ResponseHook) *Request {
 	return r
 }
 
-func (r *Request) SetRetryHook(hook RetryHook) *Request {
-	r.retryHook = hook
-	return r
-}
-
 // Hook execution order:
 //
 //  1. requestHook — runs before sending the request.
-//  2. retryHook   — if defined, takes full control over retries and
+//  2. retry — if enabled, takes full control over retries and
 //     determines the final response. In this case, responseHook is
 //     NOT invoked.
 //  3. responseHook — runs only if no retryHook is defined.
 //
 // Important:
 //
-//   - If retryHook is defined (custom or default), responseHook will be ignored.
+//   - If retry is set (custom or default), responseHook will be ignored.
 //     This avoids conflicts from reading res.Body multiple times.
 //
-//   - When using the default retryHook, place any post-processing logic
-//     (e.g. decoding JSON, logging, validation) in the PostRecv function itself.
+//   - When using the default retry, place any post-processing logic
+//     (e.g. decoding JSON, logging, validation) in the Cond function itself.
 //
-//   - When writing a custom retryHook, encapsulate your retry decision and
-//     any post-processing logic inside the retryHook implementation.
-//
-// This ensures hooks remain predictable and prevents accidental multiple
-// reads of the response body.
+// TODO: GetBody checks and it's placement for idempotent request
+// FIXME: Improve the retry loop if possible
 func (r *Request) Exec() (*Response, error) {
-	// check if no error in building request
 	if r.err != nil {
 		return nil, r.err
 	}
 
-	if host := r.req.Header.Get("Host"); host != "" {
-		r.req.Host = host
-	}
+	var (
+		totalWait time.Duration
+		err       error
+	)
 
-	// initiate trace once per request if available
-	if r.client.trace {
-		r.tracer = &TraceInfo{}
-		r.req = r.req.WithContext(r.tracer.Tracer(r.req.Context()))
-	}
-
-	r.req.URL.RawQuery = r.queries.Encode()
-	if r.requestHook != nil {
-		if err := r.requestHook(r); err != nil {
-			return nil, fmt.Errorf("failed to execute request hook: %w", err)
+	if r.IsRetry {
+		for attempt := 1; attempt <= r.retry.PollLimit; attempt++ {
+			res, err := r.client.exec(r)
+			if err != nil {
+				ctxErr := r.Context().Err()
+				if ctxErr != nil && errors.Is(ctxErr, context.DeadlineExceeded) {
+					return nil, ctxErr
+				}
+			}
+			if !r.retry.Cond(res, err) {
+				return res, err
+			}
+			// drain some of the resposne body before wait so tcp keep alive be reuse the connection
+			if res != nil && res.Body != nil {
+				_, _ = io.CopyN(io.Discard, res.Body, 2048)
+				res.Body.Close()
+			}
+			if r.retry.Backoff != nil {
+				r.retry.Wait = r.retry.Backoff.NextWaitDuration(res, attempt)
+			}
+			totalWait += r.retry.Wait
+			time.Sleep(r.retry.Wait)
 		}
-	}
-
-	// Excuetion and hooks placement
-	if r.retryHook != nil && !r.retryHookCalled {
-		r.retryHookCalled = true
-		return r.retryHook(r)
+		return nil, RetryPollError{
+			Attempts:       r.retry.PollLimit,
+			TotalSleepTime: totalWait,
+			ReqURL:         r.URI,
+			ReqMethod:      r.Method,
+			ResponseError:  err,
+		}
 	}
 
 	res, err := r.client.exec(r)
 	if r.responseHook != nil && r.requestHook == nil {
-		if err := r.responseHook(res); err != nil {
+		if err := r.responseHook(r.client, res); err != nil {
 			return nil, fmt.Errorf("failed to execute response hook: %w", err)
 		}
 	}

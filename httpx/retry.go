@@ -1,4 +1,4 @@
-package hooks
+package httpx
 
 import (
 	"fmt"
@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jshk00/collections/httpx"
 )
 
 type RetryPollError struct {
@@ -41,84 +39,30 @@ type Retry struct {
 	Wait time.Duration
 	// maxmium polling attempts to be performed before failing
 	PollLimit int
-	// PostRecv is similar to the [httpx.ResponseHook] such as status code and other post response
-	// logic goes here. if error is not nil the request is retried, if not the request is consider
-	// success.
-	PostRecv func(*httpx.Response) error
-	// This is recommended if you're passing custom io.Reader, io.ReadClose, *os.File; Because the
+	// Cond is condition in retry, all the post processing logic should go here such response
+	// parsing and status code checks. If Cond return true then request retried if false then
+	// request is considered success and retry stops.
+	Cond func(*Response, error) bool
+	// GetBody is required if you're passing custom io.Reader, io.ReadCloser, *os.File; Because the
 	// http request will only assign the GetBody for *bytes.Buffer, *bytes.Reader, *strings.Reader.
-	// If re-use of request is intended so we need to provide GetBody which will able to
-	// return fresh io.ReadCloser everytime
+	// If re-use of request is intended so we need to provide GetBody which will able to return
+	// fresh io.ReadCloser everytime. If cutom io.ReadCloser is passed and GetBody is nil then
+	// retry will return result immediately.
 	GetBody func() (io.ReadCloser, error)
 	// Backoff will use exponential backoff with jitter if nil static wait will be used
 	Backoff *BackoffWithJitter
 }
 
-func (rk *Retry) setDefaults() {
-	if rk.PollLimit <= 0 {
-		rk.PollLimit = 10
-	}
-	if rk.Wait <= 0 {
-		rk.Wait = 20 * time.Second
-	}
-	if rk.PostRecv == nil {
-		rk.PostRecv = func(r *httpx.Response) error {
-			if !r.Success() {
-				return fmt.Errorf("PostRecv: response status code is %d", r.StatusCode)
+func NewRetry() *Retry {
+	return &Retry{
+		PollLimit: 10,
+		Wait:      20 * time.Second,
+		Cond: func(r *Response, err error) bool {
+			if err != nil {
+				return true
 			}
-			return nil
-		}
-	}
-}
-
-func (rk *Retry) Hook(
-	req *httpx.Request,
-) (*httpx.Response, error) {
-	rk.setDefaults()
-
-	if req.GetBodyFn() == nil {
-		req.SetBodyFn(rk.GetBody)
-	}
-
-	var (
-		totalWait time.Duration
-		err       error
-	)
-	for attempt := 1; attempt <= rk.PollLimit; attempt++ {
-		if _, ok := <-req.Context().Done(); ok {
-			return nil, req.Context().Err()
-		}
-
-		res, err := req.Exec()
-		if err == nil {
-			if err = rk.PostRecv(res); err == nil {
-				return res, nil
-			}
-		}
-
-		if req.GetBodyFn() == nil {
-			return res, err
-		}
-
-		// drain some of the resposne body before wait so tcp keep alive be reuse the connection
-		if res != nil && res.Body != nil {
-			_, _ = io.CopyN(io.Discard, res.Body, 1024)
-			res.Body.Close()
-		}
-
-		if rk.Backoff != nil {
-			rk.Wait = rk.Backoff.NextWaitDuration(res, attempt)
-		}
-
-		totalWait += rk.Wait
-		time.Sleep(rk.Wait)
-	}
-	return nil, RetryPollError{
-		Attempts:       rk.PollLimit,
-		TotalSleepTime: totalWait,
-		ReqURL:         req.URL().String(),
-		ReqMethod:      req.Method(),
-		ResponseError:  err,
+			return !r.Success()
+		},
 	}
 }
 
@@ -166,7 +110,7 @@ func NewBackoffWithJitter(
 
 // NextWaitDuration return sleep times for retry to sleep
 func (b *BackoffWithJitter) NextWaitDuration(
-	res *httpx.Response,
+	res *Response,
 	attempt int,
 ) time.Duration {
 	if res != nil {

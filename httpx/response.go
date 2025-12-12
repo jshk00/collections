@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 )
@@ -22,10 +23,11 @@ var (
 // throw error.
 type Response struct {
 	*http.Response
-	traceInfo     *TraceInfo
-	decompressors *decompressors
+	traceInfo           *TraceInfo
+	decompressors       *decompressors
+	contentTypeDecoders *contentTypeDecoders
 	// This set body to already read so can not be read further
-	isRead bool
+	IsRead bool
 }
 
 // Success checks wether the response status code is in positive range.
@@ -44,27 +46,31 @@ func (r *Response) TraceInfo() (*TraceInfo, error) {
 // [JSONDecoder]. Make sure body should be pointer to variable you're trying to decode.
 //
 // WARN: As Decode will store bytes in memory avoid reading large responses.
-func (r *Response) Decode(v any, opts ...func(d *DecodeOptions)) error {
-	decOpts := &DecodeOptions{dec: JSONDecoder{}}
-	for _, o := range opts {
-		o(decOpts)
+func (r *Response) Decode(v any) error {
+	if r.IsRead {
+		return ErrBodyIsRead
 	}
-	b, err := r.Bytes()
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		return err
 	}
-	return decOpts.dec.Decode(b, v)
+	dec, ok := r.contentTypeDecoders.get(mt)
+	if !ok {
+		return fmt.Errorf("content type decoder not found for content %s", mt)
+	}
+	r.IsRead = true
+	return dec(v, r.Body)
 }
 
 func (r *Response) Bytes() ([]byte, error) {
-	if r.isRead {
+	if r.IsRead {
 		return nil, ErrBodyIsRead
 	}
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error reading the body, err: %w", err)
 	}
-	r.isRead = true
+	r.IsRead = true
 	return b, nil
 }
 
@@ -73,10 +79,10 @@ func (r *Response) Bytes() ([]byte, error) {
 // can saftely ignore [ErrEmptyEncoding] as this means there is not compressed response sent by
 // server.
 func (r *Response) DecompressStream() (io.ReadCloser, error) {
-	if r.isRead {
+	if r.IsRead {
 		return nil, ErrBodyIsRead
 	}
-	defer func() { r.isRead = true }()
+	defer func() { r.IsRead = true }()
 
 	v := strings.TrimSpace(r.Header.Get("Content-Encoding"))
 	if v == "" || v == "identity" {
