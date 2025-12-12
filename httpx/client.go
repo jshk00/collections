@@ -60,6 +60,7 @@ func (ce *contentTypeDecoders) get(key string) (ContentTypeDecFn, bool) {
 }
 
 type Client struct {
+	breaker             *CircuitBreaker
 	client              *http.Client
 	trace               bool
 	decompressors       *decompressors
@@ -74,6 +75,11 @@ func New() *Client {
 		contentTypeEncoders: newContentTypeEncoders(),
 		contentTypeDecoders: newContentTypeDecoders(),
 	}).SetTransport(defaultTransport)
+}
+
+func (c *Client) SetCircuitBreaker(b *CircuitBreaker) *Client {
+	c.breaker = b
+	return c
 }
 
 // SetTransport set the httptransport,
