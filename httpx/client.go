@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -148,16 +147,18 @@ func (c *Client) SetDecompressor(key string, fn func(io.Reader) (io.ReadCloser, 
 	return c
 }
 
-func (c *Client) SetContentTypeEncoder(key string, fn ContentTypeEncFn) {
+func (c *Client) SetContentTypeEncoder(key string, fn ContentTypeEncFn) *Client {
 	c.contentTypeEncoders.set(key, fn)
+	return c
 }
 
 func (c *Client) GetContentTypeEncoder(key string) (ContentTypeEncFn, bool) {
 	return c.contentTypeEncoders.get(key)
 }
 
-func (c *Client) SetContentTypeDecoder(key string, fn ContentTypeDecFn) {
+func (c *Client) SetContentTypeDecoder(key string, fn ContentTypeDecFn) *Client {
 	c.contentTypeDecoders.set(key, fn)
+	return c
 }
 
 func (c *Client) GetContentTypeDecoder(key string) (ContentTypeDecFn, bool) {
@@ -195,31 +196,6 @@ func (c *Client) Delete(url string) *Request {
 }
 
 func (c *Client) exec(r *Request) (*Response, error) {
-	if r.ctx == nil {
-		r.ctx = context.Background()
-	}
-
-	// FIXME: body encode or auto encode define in request check possible race condition for
-	// accessing headers
-	req, err := http.NewRequestWithContext(r.ctx, r.Method, r.URI, r.Body.(io.Reader))
-	if err != nil {
-		return nil, err
-	}
-	r.RawRequest = req
-
-	// initiate trace once per request if available
-	if r.IsTrace || c.trace {
-		r.tracer = &TraceInfo{}
-		req = req.WithContext(r.tracer.Tracer(req.Context()))
-	}
-
-	// Set host, queries and headers
-	req.Header = r.Header
-	req.URL.RawQuery = r.Queries.Encode()
-	if host := req.Header.Get("Host"); host != "" {
-		req.Host = host
-	}
-
 	// Execute all the request hooks
 	for i := 0; i < len(r.requestHook); i++ {
 		if err := r.requestHook[i](c, r); err != nil {
@@ -227,14 +203,7 @@ func (c *Client) exec(r *Request) (*Response, error) {
 		}
 	}
 
-	// FIXME: GetBody should we apply here?
-	if r.retry.GetBody != nil && r.IsRetry {
-		if req.GetBody == nil {
-			req.GetBody = r.retry.GetBody
-		}
-	}
-
-	res, err := c.client.Do(req) // nolint:bodyClose
+	res, err := c.client.Do(r.RawRequest) // nolint:bodyClose
 	return &Response{
 		Response:            res,
 		traceInfo:           r.tracer,

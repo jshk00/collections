@@ -15,7 +15,6 @@ type Request struct {
 	responseHook ResponseHook
 	requestHook  []RequestHook
 	client       *Client
-	err          error
 	tracer       *TraceInfo
 	ctx          context.Context
 	cookie       *http.Cookie
@@ -27,6 +26,7 @@ type Request struct {
 	Method       string
 	retry        *Retry
 	IsRetry      bool
+	Attempt      int
 }
 
 func NewRequest() *Request {
@@ -133,14 +133,7 @@ func (r *Request) SetResponseHook(hook ResponseHook) *Request {
 //
 //   - When using the default retry, place any post-processing logic
 //     (e.g. decoding JSON, logging, validation) in the Cond function itself.
-//
-// TODO: GetBody checks and it's placement for idempotent request
-// FIXME: Improve the retry loop if possible
 func (r *Request) Exec() (*Response, error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-
 	var (
 		totalWait time.Duration
 		err       error
@@ -148,6 +141,7 @@ func (r *Request) Exec() (*Response, error) {
 
 	if r.IsRetry {
 		for attempt := 1; attempt <= r.retry.PollLimit; attempt++ {
+			r.Attempt = attempt
 			res, err := r.client.exec(r)
 			if err != nil {
 				ctxErr := r.Context().Err()
@@ -156,7 +150,7 @@ func (r *Request) Exec() (*Response, error) {
 				}
 			}
 			if !r.retry.Cond(res, err) {
-				return res, err
+				return res, nil
 			}
 			// drain some of the resposne body before wait so tcp keep alive be reuse the connection
 			if res != nil && res.Body != nil {

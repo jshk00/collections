@@ -2,7 +2,6 @@ package httpx
 
 import (
 	"fmt"
-	"io"
 	"math"
 	"math/rand/v2"
 	"net/http"
@@ -43,12 +42,6 @@ type Retry struct {
 	// parsing and status code checks. If Cond return true then request retried if false then
 	// request is considered success and retry stops.
 	Cond func(*Response, error) bool
-	// GetBody is required if you're passing custom io.Reader, io.ReadCloser, *os.File; Because the
-	// http request will only assign the GetBody for *bytes.Buffer, *bytes.Reader, *strings.Reader.
-	// If re-use of request is intended so we need to provide GetBody which will able to return
-	// fresh io.ReadCloser everytime. If cutom io.ReadCloser is passed and GetBody is nil then
-	// retry will return result immediately.
-	GetBody func() (io.ReadCloser, error)
 	// Backoff will use exponential backoff with jitter if nil static wait will be used
 	Backoff *BackoffWithJitter
 }
@@ -68,7 +61,7 @@ func NewRetry() *Retry {
 
 const (
 	defaultWaitTime    = 100 * time.Millisecond
-	defaultMaxWaitTime = 30000 * time.Millisecond
+	defaultMaxWaitTime = 3000 * time.Millisecond
 )
 
 // JitterStrategy is base type for jitter stratget. Choose suitable jitter strategy
