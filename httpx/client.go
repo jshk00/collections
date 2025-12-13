@@ -81,9 +81,7 @@ func (c *Client) SetCircuitBreaker(b *CircuitBreaker) *Client {
 	return c
 }
 
-// SetTransport set the httptransport,
-// if povided transport is nil,
-// default transport will be used.
+// SetTransport set the httptransport, if provided transport is nil, default transport will be used.
 func (c *Client) SetTransport(t http.RoundTripper) *Client {
 	if t != nil {
 		c.client.Transport = t
@@ -96,8 +94,7 @@ func (c *Client) EnableTrace() *Client {
 	return c
 }
 
-// DisableRedirect disable the redirects in http.Client.
-// By default redirect are not disabled and
+// DisableRedirect disable the redirects in http.Client. By default redirect are not disabled and
 // follows upto configured redirects in http client.
 func (c *Client) DisableRedirect() *Client {
 	c.client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
@@ -106,27 +103,22 @@ func (c *Client) DisableRedirect() *Client {
 	return c
 }
 
-// SetCookieJar set cookie jar with contained cookies
-// by default no cookie jar is setup
+// SetCookieJar set cookie jar with contained cookies by default no cookie jar is setup
 func (c *Client) SetCookieJar(jar http.CookieJar) *Client {
 	c.client.Jar = jar
 	return c
 }
 
-// SetDecompressor registers a decompression function for the given
-// Content-Encoding name. Keys must match the value of the
-// Content-Encoding header exactly after trimming spaces.
+// SetDecompressor registers a decompression function for the given Content-Encoding name. Keys must
+// match the value of the Content-Encoding header exactly after trimming spaces.
 //
-// The default client provides decompressors for "gzip", "deflate",
-// and "zlib". Calling SetDecompressor with an existing key overrides
-// the default implementation.
+// The default client provides decompressors for "gzip", "deflate", and "zlib". Calling
+// SetDecompressor with an existing key overrides the default implementation.
 //
-// Multi-encoding responses (e.g. "gzip, zlib") are treated as a
-// single logical encoding. The library does not attempt to chain
-// multiple encodings internally. If a server sends multiple encodings,
-// register a decompressor using the exact header value (e.g. "gzip, zlib")
-// and implement the decoding chain inside the provided function in
-// reverse application order:
+// Multi-encoding responses (e.g. "gzip, zlib") are treated as a single logical encoding. The
+// library does not attempt to chain multiple encodings internally. If a server sends multiple
+// encodings, register a decompressor using the exact header value (e.g. "gzip, zlib") and implement
+// the decoding chain inside the provided function in reverse application order:
 //
 //	// Example for: Content-Encoding: gzip, zlib
 //	func(r io.Reader) (io.ReadCloser, error) {
