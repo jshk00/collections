@@ -11,22 +11,25 @@ import (
 )
 
 type Request struct {
-	RawRequest   *http.Request
-	responseHook ResponseHook
-	requestHook  []RequestHook
-	client       *Client
-	tracer       *TraceInfo
-	ctx          context.Context
-	cookie       *http.Cookie
-	IsTrace      bool
-	URI          string
-	Queries      url.Values
-	Header       http.Header
-	Body         any
-	Method       string
-	retry        *Retry
-	IsRetry      bool
-	Attempt      int
+	responseHook            ResponseHook
+	requestHook             []RequestHook
+	client                  *Client
+	tracer                  *TraceInfo
+	ctx                     context.Context
+	cookie                  *http.Cookie
+	retry                   *Retry
+	URI                     string
+	Queries                 url.Values
+	Header                  http.Header
+	Body                    any
+	Method                  string
+	IsTrace                 bool
+	IsRetry                 bool
+	Attempt                 int
+	AllowGetPayload         bool
+	AlloweDeletePayload     bool
+	AllowNonIdempotentRetry bool
+	RawRequest              *http.Request
 }
 
 func NewRequest() *Request {
@@ -118,6 +121,49 @@ func (r *Request) SetResponseHook(hook ResponseHook) *Request {
 	return r
 }
 
+func (r *Request) SetAllowGetPayload(b bool) *Request {
+	r.AllowGetPayload = b
+	return r
+}
+
+func (r *Request) SetAllowDeletePayload(b bool) *Request {
+	r.AlloweDeletePayload = b
+	return r
+}
+
+func (r *Request) SetAllowNonIdempotentRetry(b bool) *Request {
+	r.AllowNonIdempotentRetry = b
+	return r
+}
+
+func (r *Request) isIdempotent() bool {
+	if r.AllowNonIdempotentRetry {
+		return true
+	}
+	switch r.Method {
+	case http.MethodGet,
+		http.MethodHead,
+		http.MethodTrace,
+		http.MethodOptions,
+		http.MethodDelete,
+		http.MethodPut:
+		return true
+	}
+	return false
+}
+
+func (r *Request) isPayloadAllowed() bool {
+	switch r.Method {
+	case "", http.MethodGet:
+		return r.AllowGetPayload
+	case http.MethodDelete:
+		return r.AlloweDeletePayload
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		return true
+	}
+	return false
+}
+
 // Hook execution order:
 //
 //  1. requestHook — runs before sending the request.
@@ -139,7 +185,7 @@ func (r *Request) Exec() (*Response, error) {
 		err       error
 	)
 
-	if r.IsRetry {
+	if r.IsRetry && r.isIdempotent() {
 		for attempt := 1; attempt <= r.retry.PollLimit; attempt++ {
 			r.Attempt = attempt
 			res, err := r.client.exec(r)

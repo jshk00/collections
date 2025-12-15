@@ -14,7 +14,7 @@ import (
 )
 
 func DefaultRequestHook(c *Client, r *Request) error {
-	if r.Body != nil {
+	if r.Body != nil && r.isPayloadAllowed() {
 		rc, err := handleRequestBody(c, r)
 		if err != nil {
 			return err
@@ -68,7 +68,7 @@ const (
 
 // handleRequestBody will handle the automatic encoding of given request body. If the retry is
 // desired the body must be replayable and must implement [io.Seeker] interface. In order to
-// automatic content type encoding works user must provide correct content type header and
+// automatic content type encoding work user must provide correct content type header and
 // content type encoder can be registered to support custom content type.
 func handleRequestBody(c *Client, r *Request) (io.Reader, error) {
 	switch v := r.Body.(type) {
