@@ -39,11 +39,11 @@ func TestMap(t *testing.T) {
 		}
 		wg.Wait()
 		for _, d := range data {
-			if mm.Get(d.key) != d.want {
+			if v, _ := mm.Get(d.key); v != d.want {
 				t.Errorf(
 					"must be concurrency issue we wanted %s but got %s for %s key",
 					d.want,
-					mm.Get(d.key),
+					v,
 					d.key,
 				)
 			}
@@ -60,7 +60,7 @@ func TestMap(t *testing.T) {
 		for _, el := range data {
 			el := el
 			go func() {
-				if v := mm.Get(el.key); v == "" {
+				if v, _ := mm.Get(el.key); v == "" {
 					t.Error("value should not be empty")
 				}
 				wg.Done()
@@ -86,7 +86,7 @@ func TestMap(t *testing.T) {
 		mu.RLock()
 		go func() {
 			for _, el := range data {
-				if v := mm.Get(el.key); v == "" {
+				if v, _ := mm.Get(el.key); v == "" {
 					t.Log("values is empty")
 				}
 			}
